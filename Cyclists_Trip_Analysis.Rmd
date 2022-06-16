@@ -1,0 +1,143 @@
+---
+title: "Data analysis project using R"
+author: "Fan Zou"
+date: '2022-06-16'
+output:
+  html_document: default
+  pdf_document: default
+---
+
+## Load packages
+
+```{r load the libraries}
+library(tidyverse)
+library(ggplot2)
+```
+
+## Collect Data
+We need to read the files. The most recent 12 month data have been downloaded to the local disk.
+The name of the files are compatible. They all start with the year-month plus a common suffix.
+We read the data into data frame one by one. Combine them into a single file.
+
+```{r read data from csv files, message=FALSE, warning=FALSE}
+# the year of the files
+x=c(202106:202112,202201:202205)
+filename=paste("C:/Users/Fan/Documents/data analyst/course 8/clean data/",toString(x[1]),"-divvy-tripdata.csv",sep="")
+print(filename)
+Bike_Data=read_csv(filename) # read the first file
+for (i in 2:12) {
+  filename=paste("C:/Users/Fan/Documents/data analyst/course 8/clean data/",toString(x[i]),"-divvy-tripdata.csv",sep="")
+  print(filename)
+  temp=read_csv(filename)  # read following files
+  Bike_Data=rbind(Bike_Data,temp) # combine files into single data frame
+}
+temp=c() # empty the variable to save space
+```
+
+## Prepare data
+We are interested in the difference between annual membership users and casual users. The difference could be the time, duration, type fo bike and location of the usage.
+
+Before we make any calculations, we take a look at the data summary to know what are recorded in the data.
+```{r summary of the data}
+summary(Bike_Data)
+```
+
+We extract the day of the week from the time, and calculate the duration (length of the ride) for each trip.
+```{r view the data}
+Bike_Data['Day_Week']=weekdays(Bike_Data$started_at)
+Bike_Data['Duration']=Bike_Data$ended_at-Bike_Data$started_at
+head(Bike_Data,5)
+```
+Based on the previous calculations, we find out the mean, max, and min values of the trips. 
+```{r Calculate mean/max/min duration to understand data}
+Duration_Mean= mean(Bike_Data$Duration)
+Duration_Max = max(Bike_Data$Duration)
+Duration_Min = min(Bike_Data$Duration)
+print(paste("Mean ride length is: ",Duration_Mean,sep=""))
+print(paste("Max  ride length is: ",Duration_Max, sep=""))
+print(paste("Min  ride length is: ",Duration_Min, sep=""))
+```
+## Clean data
+We find that some data does not make sense. There are a few things we need to filter:
+* The end time should be larger than the start time.
+* The start date should be after 21-06-01.
+* Invalid date format that results to abnormal large duration.
+In total, 12657 rows are deleted.
+
+```{r Clean data and recalculate the mean/max/min durations}
+Bike_Data_Clean=filter(Bike_Data,format(Bike_Data$started_at,"%y-%m-%d")>="21-06-01" & Bike_Data$Duration>0 & Bike_Data$Duration<2e04)
+Duration_Mean= mean(Bike_Data_Clean$Duration)
+Duration_Max = max(Bike_Data_Clean$Duration)
+Duration_Min = min(Bike_Data_Clean$Duration)
+print(paste("Mean ride length is: ",Duration_Mean,sep=""))
+print(paste("Max  ride length is: ",Duration_Max, sep=""))
+print(paste("Min  ride length is: ",Duration_Min, sep=""))
+```
+We are interested in how the duration is distributed. Histogram can be used to show it. From this plot, we can check if our data cleaning works well.We find that the histogram has a poisson-like distribution which is normal for this type of data.
+
+```{r show the duration distribution}
+ggplot(data = Bike_Data_Clean, aes(x = Duration)) +  geom_histogram() + coord_cartesian(xlim = c(0, 5000))
+```
+
+We check if only two types of members exist. This will help discover any typos in the membership column. From the results, the data is clean. We did the same thing to check if there are typos in the bike types. This column is also clean.
+
+```{r show the types of users}
+unique(Bike_Data_Clean$member_casual)
+unique(Bike_Data_Clean$rideable_type)
+```
+
+
+## Analyze data
+
+#### First, we want to know what is the average duration. 
+We find that casual users have almost twice of the time than that of the members.
+
+```{r show average duration for different memberships}
+Bike_Data_Clean %>% 
+  group_by(member_casual) %>% 
+  summarise(mean(Duration),sd(Duration))
+```
+
+We want to find out more details about how these numbers change over the day of week.We group the data by both membership and the day of Week. We find that there are ride time is longer during weekends for both members and casual users. The casual users always ride longer than members.
+
+```{r show the average usage over the day of week}
+Duration_Mean_Week = Bike_Data_Clean %>% 
+  group_by(member_casual,Day_Week) %>% 
+  summarise(t=mean(Duration),DurationSD=sd(Duration))
+Duration_Mean_Week$Day_Week=ordered(Duration_Mean_Week$Day_Week, levels=c("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"))
+Duration_Mean_Week["DurationMean"]=as.numeric(Duration_Mean_Week$t)
+ggplot(data = Duration_Mean_Week,aes(x=Day_Week,y=DurationMean, fill=member_casual))+ 
+  geom_bar(stat="identity") +
+  theme(axis.text.x = element_text(angle = 45))+
+  facet_wrap(~member_casual)
+```
+
+#### Second, We want to know the number of users by the day of week.
+We find that casual users tends to ride the bike during the weekends, however members are more evenly distributed over the week.
+
+```{r show the user number over the week}
+Counts_Users=Bike_Data_Clean %>% 
+  group_by(member_casual,Day_Week) %>% 
+  summarise(number_of_rides = n())
+Counts_Users$Day_Week=ordered(Counts_Users$Day_Week, levels=c("Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"))
+
+ggplot(data = Counts_Users,aes(x=Day_Week,y=number_of_rides, fill=member_casual))+ 
+  geom_bar(stat="identity") +
+  theme(axis.text.x = element_text(angle = 45))+
+  facet_wrap(~member_casual)
+```
+
+
+#### Third, we want to know what kind of bikes are used by casual users and members.
+From the bar plot below, we find that both members and casual users mostly use classic bikes and electric bikes. But only casual users use docked bikes, although this percentage is small comparing to the other two types.
+
+```{r show the user number grouped by bike types}
+Counts_Types=Bike_Data_Clean %>% 
+  group_by(member_casual,rideable_type) %>% 
+  summarise(number_of_rides = n())
+
+ggplot(data = Counts_Types,aes(x=rideable_type,y=number_of_rides, fill=rideable_type))+ 
+  geom_bar(stat="identity") +
+  facet_wrap(~member_casual)
+```
+
